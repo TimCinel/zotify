@@ -46,7 +46,7 @@ def get_followed_artists() -> list:
     return artists
 
 
-def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, Any, Any, Any, Any, int]:
+def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, Any, Any, Any, Any, int, str, str]:
     """ Retrieves metadata for downloaded songs """
     with Loader(PrintChannel.PROGRESS_INFO, "Fetching track information..."):
         (raw, info) = Zotify.invoke_url(f'{TRACKS_URL}?ids={song_id}&market=from_token')
@@ -60,6 +60,7 @@ def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, An
             artists.append(data[NAME])
 
         album_name = info[TRACKS][0][ALBUM][NAME]
+        album_id = info[TRACKS][0][ALBUM][ID]
         name = info[TRACKS][0][NAME]
         release_year = info[TRACKS][0][ALBUM][RELEASE_DATE].split('-')[0]
         disc_number = info[TRACKS][0][DISC_NUMBER]
@@ -74,7 +75,32 @@ def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, An
                 image = i
         image_url = image[URL]
 
-        return artists, info[TRACKS][0][ARTISTS], album_name, name, image_url, release_year, disc_number, track_number, scraped_song_id, is_playable, duration_ms
+        # Fetch album metadata to get album artist
+        album_artist = "Unknown Album Artist"
+        album_artist_or_various = "Various Artists"
+        try:
+            (album_raw, album_info) = Zotify.invoke_url(f'https://api.spotify.com/v1/albums/{album_id}')
+            if ARTISTS in album_info and len(album_info[ARTISTS]) > 0:
+                album_artist = album_info[ARTISTS][0][NAME]
+                
+                # Check if this should be "Various Artists" by comparing track artists
+                album_tracks = album_info.get(TRACKS, {}).get(ITEMS, [])
+                unique_artists = set()
+                for track in album_tracks:
+                    for track_artist in track.get(ARTISTS, []):
+                        unique_artists.add(track_artist[NAME])
+                
+                # If album has many different artists (>50% of tracks have different artists), use "Various Artists"
+                if len(unique_artists) > len(album_tracks) * 0.5 and len(unique_artists) > 3:
+                    album_artist_or_various = "Various Artists"
+                else:
+                    album_artist_or_various = album_artist
+        except Exception as e:
+            # If album fetch fails, fall back to first track artist
+            album_artist = artists[0] if artists else "Unknown Album Artist"
+            album_artist_or_various = album_artist
+
+        return artists, info[TRACKS][0][ARTISTS], album_name, name, image_url, release_year, disc_number, track_number, scraped_song_id, is_playable, duration_ms, album_artist, album_artist_or_various
     except Exception as e:
         raise ValueError(f'Failed to parse TRACKS_URL response: {str(e)}\n{raw}')
 
@@ -155,7 +181,7 @@ def download_track(mode: str, track_id: str, extra_keys=None, disable_progressba
         output_template = Zotify.CONFIG.get_output(mode)
 
         (artists, raw_artists, album_name, name, image_url, release_year, disc_number,
-         track_number, scraped_song_id, is_playable, duration_ms) = get_song_info(track_id)
+         track_number, scraped_song_id, is_playable, duration_ms, album_artist, album_artist_or_various) = get_song_info(track_id)
 
         song_name = fix_filename(artists[0]) + ' - ' + fix_filename(name)
 
@@ -165,6 +191,8 @@ def download_track(mode: str, track_id: str, extra_keys=None, disable_progressba
         ext = EXT_MAP.get(Zotify.CONFIG.get_download_format().lower())
 
         output_template = output_template.replace("{artist}", fix_filename(artists[0]))
+        output_template = output_template.replace("{album_artist}", fix_filename(album_artist))
+        output_template = output_template.replace("{album_artist_or_various}", fix_filename(album_artist_or_various))
         output_template = output_template.replace("{album}", fix_filename(album_name))
         output_template = output_template.replace("{song_name}", fix_filename(name))
         output_template = output_template.replace("{release_year}", fix_filename(release_year))
@@ -261,7 +289,7 @@ def download_track(mode: str, track_id: str, extra_keys=None, disable_progressba
                             Printer.print(PrintChannel.SKIPS, f"###   Skipping lyrics for {song_name}: lyrics not available   ###")
                     convert_audio_format(filename_temp)
                     try:
-                        set_audio_tags(filename_temp, artists, genres, name, album_name, release_year, disc_number, track_number)
+                        set_audio_tags(filename_temp, artists, genres, name, album_name, release_year, disc_number, track_number, album_artist, album_artist_or_various)
                         set_music_thumbnail(filename_temp, image_url)
                     except Exception:
                         Printer.print(PrintChannel.ERRORS, "Unable to write metadata, ensure ffmpeg is installed and added to your PATH.")

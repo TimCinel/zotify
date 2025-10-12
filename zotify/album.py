@@ -1,7 +1,7 @@
 from zotify.const import ITEMS, ARTISTS, NAME, ID
-from zotify.termoutput import Printer
+from zotify.termoutput import Printer, PrintChannel
 from zotify.track import download_track
-from zotify.utils import fix_filename
+from zotify.utils import fix_filename, get_previously_downloaded
 from zotify.zotify import Zotify
 
 ALBUM_URL = 'https://api.spotify.com/v1/albums'
@@ -45,10 +45,20 @@ def get_artist_albums(artist_id):
 
 def download_album(album):
     """ Downloads songs from an album """
+    # Load archive once at start for early skip checks
+    archive_ids = get_previously_downloaded() if Zotify.CONFIG.get_skip_previously_downloaded() else set()
+
     artist, album_name = get_album_name(album)
     tracks = get_album_tracks(album)
     for n, track in Printer.progress(enumerate(tracks, start=1), unit_scale=True, unit='Song', total=len(tracks)):
-        download_track('album', track[ID], extra_keys={'album_num': str(n).zfill(2), 'artist': artist, 'album': album_name, 'album_id': album}, disable_progressbar=True)
+        track_id = track[ID]
+
+        # Early skip check - avoid API calls for already downloaded songs
+        if Zotify.CONFIG.get_skip_previously_downloaded() and track_id in archive_ids:
+            Printer.print(PrintChannel.SKIPS, f'Skipping track {track_id} (already downloaded)')
+            continue
+
+        download_track('album', track_id, extra_keys={'album_num': str(n).zfill(2), 'artist': artist, 'album': album_name, 'album_id': album}, disable_progressbar=True)
 
 
 def download_artist_albums(artist):

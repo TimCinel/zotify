@@ -34,6 +34,7 @@ MD_GENREDELIMITER = 'MD_GENREDELIMITER'
 PRINT_PROGRESS_INFO = 'PRINT_PROGRESS_INFO'
 PRINT_WARNINGS = 'PRINT_WARNINGS'
 RETRY_ATTEMPTS = 'RETRY_ATTEMPTS'
+CONNECTION_RETRIES = 'CONNECTION_RETRIES'
 CONFIG_VERSION = 'CONFIG_VERSION'
 DOWNLOAD_LYRICS = 'DOWNLOAD_LYRICS'
 
@@ -55,6 +56,7 @@ CONFIG_VALUES = {
     SKIP_EXISTING:              { 'default': 'True',  'type': bool, 'arg': '--skip-existing'              },
     SKIP_PREVIOUSLY_DOWNLOADED: { 'default': 'False', 'type': bool, 'arg': '--skip-previously-downloaded' },
     RETRY_ATTEMPTS:             { 'default': '1',     'type': int,  'arg': '--retry-attempts'             },
+    CONNECTION_RETRIES:         { 'default': '5',     'type': int,  'arg': '--connection-retries'         },
     BULK_WAIT_TIME:             { 'default': '1',     'type': int,  'arg': '--bulk-wait-time'             },
     OVERRIDE_AUTO_WAIT:         { 'default': 'False', 'type': bool, 'arg': '--override-auto-wait'         },
     CHUNK_SIZE:                 { 'default': '20000', 'type': int,  'arg': '--chunk-size'                 },
@@ -308,3 +310,7 @@ class Config:
     @classmethod
     def get_retry_attempts(cls) -> int:
         return cls.get(RETRY_ATTEMPTS)
+
+    @classmethod
+    def get_connection_retries(cls) -> int:
+        return cls.get(CONNECTION_RETRIES)

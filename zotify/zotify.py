@@ -21,6 +21,36 @@ class Zotify:
         Zotify.login(args)
 
     @classmethod
+    def _create_session_with_retry(cls, session_builder, initial_delay=1):
+        """ Creates a session with retry logic and exponential backoff for connection errors """
+        from zotify.termoutput import Printer, PrintChannel
+
+        max_retries = cls.CONFIG.get_connection_retries()
+        for attempt in range(max_retries):
+            try:
+                return session_builder.create()
+            except ConnectionRefusedError as e:
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2 ** attempt)  # Exponential backoff
+                    Printer.print(PrintChannel.WARNINGS, f"Connection refused (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    Printer.print(PrintChannel.ERRORS, f"Failed to connect to Spotify after {max_retries} attempts: {e}")
+                    raise
+            except OSError as e:
+                # Catch other connection-related errors (timeout, network unreachable, etc.)
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2 ** attempt)
+                    Printer.print(PrintChannel.WARNINGS, f"Connection error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    Printer.print(PrintChannel.ERRORS, f"Failed to connect to Spotify after {max_retries} attempts: {e}")
+                    raise
+            except RuntimeError as e:
+                # RuntimeError is for authentication failures, don't retry
+                raise
+
+    @classmethod
     def login(cls, args):
         """ Authenticates with Spotify and saves credentials to a file """
 
@@ -29,7 +59,8 @@ class Zotify:
         if Path(cred_location).is_file():
             try:
                 conf = Session.Configuration.Builder().set_store_credentials(False).build()
-                cls.SESSION = Session.Builder(conf).stored_file(cred_location).create()
+                session_builder = Session.Builder(conf).stored_file(cred_location)
+                cls.SESSION = cls._create_session_with_retry(session_builder)
                 return
             except RuntimeError:
                 pass
@@ -43,7 +74,8 @@ class Zotify:
                     conf = Session.Configuration.Builder().set_stored_credential_file(cred_location).build()
                 else:
                     conf = Session.Configuration.Builder().set_store_credentials(False).build()
-                cls.SESSION = Session.Builder(conf).user_pass(user_name, password).create()
+                session_builder = Session.Builder(conf).user_pass(user_name, password)
+                cls.SESSION = cls._create_session_with_retry(session_builder)
                 return
             except RuntimeError:
                 pass

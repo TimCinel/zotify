@@ -1,7 +1,7 @@
 from zotify.const import ITEMS, ID, TRACK, NAME
-from zotify.termoutput import Printer
+from zotify.termoutput import Printer, PrintChannel
 from zotify.track import download_track
-from zotify.utils import split_input
+from zotify.utils import split_input, get_previously_downloaded
 from zotify.zotify import Zotify
 
 MY_PLAYLISTS_URL = 'https://api.spotify.com/v1/me/playlists'
@@ -49,11 +49,22 @@ def get_playlist_info(playlist_id):
 def download_playlist(playlist):
     """Downloads all the songs from a playlist"""
 
+    # Load archive once at start for early skip checks
+    archive_ids = get_previously_downloaded() if Zotify.CONFIG.get_skip_previously_downloaded() else set()
+
     playlist_songs = [song for song in get_playlist_songs(playlist[ID]) if song[TRACK] is not None and song[TRACK][ID]]
     p_bar = Printer.progress(playlist_songs, unit='song', total=len(playlist_songs), unit_scale=True)
     enum = 1
     for song in p_bar:
-        download_track('extplaylist', song[TRACK][ID], extra_keys={'playlist': playlist[NAME], 'playlist_num': str(enum).zfill(2)}, disable_progressbar=True)
+        track_id = song[TRACK][ID]
+
+        # Early skip check - avoid API calls for already downloaded songs
+        if Zotify.CONFIG.get_skip_previously_downloaded() and track_id in archive_ids:
+            p_bar.set_description(f'Skipping {song[TRACK][NAME]} (already downloaded)')
+            enum += 1
+            continue
+
+        download_track('extplaylist', track_id, extra_keys={'playlist': playlist[NAME], 'playlist_num': str(enum).zfill(2)}, disable_progressbar=True)
         p_bar.set_description(song[TRACK][NAME])
         enum += 1
 

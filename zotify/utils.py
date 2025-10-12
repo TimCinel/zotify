@@ -15,6 +15,9 @@ from zotify.const import ARTIST, GENRE, TRACKTITLE, ALBUM, YEAR, DISCNUMBER, TRA
     WINDOWS_SYSTEM, ALBUMARTIST
 from zotify.zotify import Zotify
 
+# Global cache for archive file to avoid re-reading on every song
+_archive_cache = None
+
 
 class MusicFormat(str, Enum):
     MP3 = 'mp3',
@@ -32,17 +35,32 @@ def create_download_directory(download_path: str) -> None:
             pass
 
 
-def get_previously_downloaded() -> List[str]:
-    """ Returns list of all time downloaded songs """
+def get_previously_downloaded(use_cache: bool = True) -> set:
+    """ Returns set of all time downloaded song IDs. Uses cache to avoid re-reading file. """
+    global _archive_cache
 
-    ids = []
+    # Return cached version if available and caching is enabled
+    if use_cache and _archive_cache is not None:
+        return _archive_cache
+
+    ids = set()
     archive_path = Zotify.CONFIG.get_song_archive()
 
     if Path(archive_path).exists():
         with open(archive_path, 'r', encoding='utf-8') as f:
-            ids = [line.strip().split('\t')[0] for line in f.readlines()]
+            ids = {line.strip().split('\t')[0] for line in f.readlines()}
+
+    # Cache the result if caching is enabled
+    if use_cache:
+        _archive_cache = ids
 
     return ids
+
+
+def invalidate_archive_cache() -> None:
+    """ Invalidates the archive cache, forcing next read to fetch from disk """
+    global _archive_cache
+    _archive_cache = None
 
 
 def add_to_archive(song_id: str, filename: str, author_name: str, song_name: str) -> None:
@@ -56,6 +74,9 @@ def add_to_archive(song_id: str, filename: str, author_name: str, song_name: str
     else:
         with open(archive_path, 'w', encoding='utf-8') as file:
             file.write(f'{song_id}\t{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\t{author_name}\t{song_name}\t{filename}\n')
+
+    # Invalidate cache so next read fetches updated archive
+    invalidate_archive_cache()
 
 
 def get_directory_song_ids(download_path: str) -> List[str]:

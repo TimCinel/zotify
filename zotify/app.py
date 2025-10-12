@@ -10,7 +10,7 @@ from zotify.playlist import get_playlist_songs, get_playlist_info, download_from
 from zotify.podcast import download_episode, get_show_episodes
 from zotify.termoutput import Printer, PrintChannel
 from zotify.track import download_track, get_saved_tracks, get_followed_artists
-from zotify.utils import splash, split_input, regex_input_for_urls
+from zotify.utils import splash, split_input, regex_input_for_urls, get_previously_downloaded
 from zotify.zotify import Zotify
 
 SEARCH_URL = 'https://api.spotify.com/v1/search'
@@ -53,11 +53,21 @@ def client(args) -> None:
         return
 
     if args.liked_songs:
+        # Load archive once at start for early skip checks
+        archive_ids = get_previously_downloaded() if Zotify.CONFIG.get_skip_previously_downloaded() else set()
+
         for song in get_saved_tracks():
             if not song[TRACK][NAME] or not song[TRACK][ID]:
                 Printer.print(PrintChannel.SKIPS, '###   SKIPPING:  SONG DOES NOT EXIST ANYMORE   ###' + "\n")
             else:
-                download_track('liked', song[TRACK][ID])
+                track_id = song[TRACK][ID]
+
+                # Early skip check - avoid API calls for already downloaded songs
+                if Zotify.CONFIG.get_skip_previously_downloaded() and track_id in archive_ids:
+                    Printer.print(PrintChannel.SKIPS, f'\n###   SKIPPING: {song[TRACK][NAME]} (SONG ALREADY DOWNLOADED ONCE)   ###\n')
+                    continue
+
+                download_track('liked', track_id)
         return
     
     if args.followed_artists:
@@ -86,11 +96,18 @@ def download_from_urls(urls: list[str]) -> bool:
     """ Downloads from a list of urls """
     download = False
 
+    # Load archive once at start for early skip checks (avoids re-reading file for every song)
+    archive_ids = get_previously_downloaded() if Zotify.CONFIG.get_skip_previously_downloaded() else set()
+
     for spotify_url in urls:
         track_id, album_id, playlist_id, episode_id, show_id, artist_id = regex_input_for_urls(spotify_url)
 
         if track_id is not None:
             download = True
+            # Early skip check for single tracks
+            if Zotify.CONFIG.get_skip_previously_downloaded() and track_id in archive_ids:
+                Printer.print(PrintChannel.SKIPS, f'\n###   SKIPPING: Track {track_id} (SONG ALREADY DOWNLOADED ONCE)   ###\n')
+                continue
             download_track('single', track_id)
         elif artist_id is not None:
             download = True
@@ -108,16 +125,24 @@ def download_from_urls(urls: list[str]) -> bool:
                 if not song[TRACK][NAME] or not song[TRACK][ID]:
                     Printer.print(PrintChannel.SKIPS, '###   SKIPPING:  SONG DOES NOT EXIST ANYMORE   ###' + "\n")
                 else:
+                    track_id = song[TRACK][ID]
+
+                    # Early skip check - avoid API calls for already downloaded songs
+                    if Zotify.CONFIG.get_skip_previously_downloaded() and track_id in archive_ids:
+                        Printer.print(PrintChannel.SKIPS, f'\n###   SKIPPING: {song[TRACK][NAME]} (SONG ALREADY DOWNLOADED ONCE)   ###\n')
+                        enum += 1
+                        continue
+
                     if song[TRACK][TYPE] == "episode": # Playlist item is a podcast episode
                         download_episode(song[TRACK][ID])
                     else:
-                        download_track('playlist', song[TRACK][ID], extra_keys=
+                        download_track('playlist', track_id, extra_keys=
                         {
                             'playlist_song_name': song[TRACK][NAME],
                             'playlist': name,
                             'playlist_num': str(enum).zfill(char_num),
                             'playlist_id': playlist_id,
-                            'playlist_track_id': song[TRACK][ID]
+                            'playlist_track_id': track_id
                         })
                     enum += 1
         elif episode_id is not None:

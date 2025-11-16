@@ -99,9 +99,9 @@ CODEC_MAP = {
     'fdk_aac': 'libfdk_aac',
     'm4a': 'aac',
     'mp3': 'libmp3lame',
-    'ogg': 'copy',
+    'ogg': 'libvorbis',
     'opus': 'libopus',
-    'vorbis': 'copy',
+    'vorbis': 'libvorbis',
 }
 
 EXT_MAP = {

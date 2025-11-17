@@ -77,24 +77,28 @@ def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, An
 
         # Fetch album metadata to get album artist
         album_artist = "Unknown Album Artist"
-        album_artist_or_various = "Various Artists"
+        album_artist_or_various = None
         try:
             (album_raw, album_info) = Zotify.invoke_url(f'https://api.spotify.com/v1/albums/{album_id}')
             if ARTISTS in album_info and len(album_info[ARTISTS]) > 0:
                 album_artist = album_info[ARTISTS][0][NAME]
-                
+
                 # Check if this should be "Various Artists" by comparing track artists
                 album_tracks = album_info.get(TRACKS, {}).get(ITEMS, [])
                 unique_artists = set()
                 for track in album_tracks:
                     for track_artist in track.get(ARTISTS, []):
                         unique_artists.add(track_artist[NAME])
-                
+
                 # If album has many different artists (>50% of tracks have different artists), use "Various Artists"
                 if len(unique_artists) > len(album_tracks) * 0.5 and len(unique_artists) > 3:
                     album_artist_or_various = "Various Artists"
                 else:
                     album_artist_or_various = album_artist
+            else:
+                # API succeeded but returned no artist data - fall back to track artist
+                album_artist = artists[0] if artists else "Unknown Album Artist"
+                album_artist_or_various = album_artist
         except Exception as e:
             # If album fetch fails, fall back to first track artist
             album_artist = artists[0] if artists else "Unknown Album Artist"

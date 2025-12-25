@@ -1,0 +1,103 @@
+## Basic context
+
+See CLAUDE.md and README.md 
+
+Resources:
+* config.json and credentials.json are in available, if you want to run Zotify or query the Spotify API
+* The output directory for "production" Zotify downloads is mounted at /Volumes/music/zotify/
+* Plex library can be accessed using details in ~/src/TimCinel/automations/zotify/plex-config.inc
+
+Activity on the main git repo seems to have slowed, the Googolplexed0 fork is now considered the active repo.
+
+## Problem
+
+Downloading tracks has stopped working.
+
+
+## Caveats 
+
+We're running on my own fork, which has some featuers and optimisations that are not in the original repo.
+
+We're running our own fork of librespot, since the last problem we ran into required changes that weren't 
+yet in librespot python (but they were in the rust library)
+
+code is in ~/src/librespot-python and our changes are on the HEAD commit
+
+
+
+## Ideas
+
+* librespotify may need bumping
+
+Try against this track:
+https://open.spotify.com/track/1jrDKFHIpbrLvBunLBPxtJ
+
+If you get that working, you've probably fixed it.
+
+## Investigation Results
+
+### Root Cause
+Downloads were failing with **429 API rate limit exceeded** errors when fetching track metadata from Spotify's Web API.
+
+The issue was caused by **shared API credentials**:
+- All Zotify/librespot users share the same hardcoded client ID: `65b708073fc0480ea92a077233ca87bd` (found in librespot-python/librespot/mercury.py)
+- All users worldwide contribute to the same rate limit pool
+- Spotify's rate limit is calculated on a rolling 30-second window
+- This is a known widespread issue affecting all Zotify users as of December 2025
+
+Related issue: https://github.com/Googolplexed0/zotify/issues/135
+
+### Solution Implemented
+
+Implemented @IsaacAgulhas's solution from the GitHub issue to use **personal Spotify Developer credentials** instead of shared credentials.
+
+**Changes made:**
+
+1. **Created `zotify/tokenmanager.py`**
+   - Manages OAuth tokens using personal client credentials
+   - Handles token expiration and refresh
+   - Credit: @IsaacAgulhas (https://github.com/Googolplexed0/zotify/issues/135#issuecomment-3686587380)
+
+2. **Updated `zotify/track.py`**
+   - Modified `get_song_info()` to use SpotifyTokenManager
+   - Bypasses shared librespot credentials for Web API calls
+   - Added album metadata fetching with personal credentials
+
+3. **Added configuration options in `zotify/config.py`**
+   - `SPOTIFY_CLIENT_ID` - Your Spotify Developer app client ID
+   - `SPOTIFY_CLIENT_SECRET` - Your Spotify Developer app client secret
+   - Can be set via config.json or command-line flags
+
+4. **Updated `requirements.txt`**
+   - Switched from custom fork to official upstream: `https://github.com/kokarare1212/librespot-python/archive/refs/heads/main.zip`
+   - Updated from librespot 0.0.9 → 0.0.10 (latest)
+
+5. **Improved error handling in `zotify/zotify.py`**
+   - Added 429 detection and Retry-After header support in `invoke_url_with_params()`
+   - Better JSON decode error handling
+
+### How to Use
+
+1. Get Spotify Developer credentials:
+   - Go to https://developer.spotify.com/dashboard
+   - Create an app
+   - Copy Client ID and Client Secret
+
+2. Add to `config.json`:
+   ```json
+   {
+     "SPOTIFY_CLIENT_ID": "your_client_id_here",
+     "SPOTIFY_CLIENT_SECRET": "your_client_secret_here"
+   }
+   ```
+
+3. Or use command-line flags:
+   ```bash
+   python -m zotify --spotify-client-id YOUR_ID --spotify-client-secret YOUR_SECRET [url]
+   ```
+
+### Result
+
+- Downloads now work without 429 rate limit errors
+- Each user has their own rate limit quota
+- No longer affected by other users' activity

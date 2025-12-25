@@ -111,9 +111,50 @@ class Zotify:
 
     @classmethod
     def invoke_url_with_params(cls, url, limit, offset, **kwargs):
+        from zotify.termoutput import Printer, PrintChannel
         headers, params = cls.get_auth_header_and_params(limit=limit, offset=offset)
         params.update(kwargs)
-        return requests.get(url, headers=headers, params=params).json()
+        response = requests.get(url, headers=headers, params=params)
+
+        # Handle empty responses
+        try:
+            responsejson = response.json()
+        except json.decoder.JSONDecodeError:
+            responsejson = {"error": {"status": response.status_code, "message": "Empty or invalid JSON response"}}
+
+        # Check for errors in the response
+        if 'error' in responsejson:
+            error_status = responsejson['error'].get('status', 'unknown')
+            error_message = responsejson['error'].get('message', 'Unknown error')
+
+            # Handle 429 rate limiting with Retry-After header
+            if error_status == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                try:
+                    wait_time = int(retry_after)
+                except (ValueError, TypeError):
+                    wait_time = 60
+
+                Printer.print(PrintChannel.WARNINGS, f"Rate limited by Spotify API (429). Retry-After: {retry_after}s")
+                Printer.print(PrintChannel.WARNINGS, f"URL: {url}")
+                Printer.print(PrintChannel.WARNINGS, f"Waiting {wait_time} seconds before retrying...")
+                time.sleep(wait_time)
+
+                # Retry the request once
+                response = requests.get(url, headers=headers, params=params)
+                responsejson = response.json()
+
+                # If still failing, raise an error
+                if 'error' in responsejson:
+                    error_status = responsejson['error'].get('status', 'unknown')
+                    error_message = responsejson['error'].get('message', 'Unknown error')
+                    Printer.print(PrintChannel.API_ERRORS, f"Spotify API Error ({error_status}): {error_message}")
+                    raise RuntimeError(f"Spotify API Error ({error_status}): {error_message}")
+            else:
+                Printer.print(PrintChannel.API_ERRORS, f"Spotify API Error ({error_status}): {error_message}")
+                raise RuntimeError(f"Spotify API Error ({error_status}): {error_message}")
+
+        return responsejson
 
     @classmethod
     def invoke_url(cls, url, tryCount=0):

@@ -37,6 +37,8 @@ RETRY_ATTEMPTS = 'RETRY_ATTEMPTS'
 CONNECTION_RETRIES = 'CONNECTION_RETRIES'
 CONFIG_VERSION = 'CONFIG_VERSION'
 DOWNLOAD_LYRICS = 'DOWNLOAD_LYRICS'
+SPOTIFY_CLIENT_ID = 'SPOTIFY_CLIENT_ID'
+SPOTIFY_CLIENT_SECRET = 'SPOTIFY_CLIENT_SECRET'
 
 CONFIG_VALUES = {
     SAVE_CREDENTIALS:           { 'default': 'True',  'type': bool, 'arg': '--save-credentials'           },
@@ -70,7 +72,9 @@ CONFIG_VALUES = {
     PRINT_API_ERRORS:           { 'default': 'True',  'type': bool, 'arg': '--print-api-errors'           },
     PRINT_PROGRESS_INFO:        { 'default': 'True',  'type': bool, 'arg': '--print-progress-info'        },
     PRINT_WARNINGS:             { 'default': 'True',  'type': bool, 'arg': '--print-warnings'             },
-    TEMP_DOWNLOAD_DIR:          { 'default': '',      'type': str,  'arg': '--temp-download-dir'          }
+    TEMP_DOWNLOAD_DIR:          { 'default': '',      'type': str,  'arg': '--temp-download-dir'          },
+    SPOTIFY_CLIENT_ID:          { 'default': '',      'type': str,  'arg': '--spotify-client-id'          },
+    SPOTIFY_CLIENT_SECRET:      { 'default': '',      'type': str,  'arg': '--spotify-client-secret'      }
 }
 
 OUTPUT_DEFAULT_PLAYLIST = '{playlist}/{artist} - {song_name}.{ext}'
@@ -262,6 +266,14 @@ class Config:
         if cls.get(TEMP_DOWNLOAD_DIR) == '':
             return ''
         return PurePath(cls.get_root_path()).joinpath(cls.get(TEMP_DOWNLOAD_DIR))
+
+    @classmethod
+    def get_spotify_client_id(cls) -> str:
+        return cls.get(SPOTIFY_CLIENT_ID)
+
+    @classmethod
+    def get_spotify_client_secret(cls) -> str:
+        return cls.get(SPOTIFY_CLIENT_SECRET)
 
     @classmethod
     def get_save_genres(cls) -> bool:

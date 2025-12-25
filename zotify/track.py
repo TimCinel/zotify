@@ -17,6 +17,21 @@ from zotify.utils import fix_filename, set_audio_tags, set_music_thumbnail, crea
 from zotify.zotify import Zotify
 import traceback
 from zotify.loader import Loader
+from zotify.tokenmanager import SpotifyTokenManager
+import requests
+
+# Token manager will be initialized after config is loaded
+token_manager = None
+
+def get_token_manager():
+    global token_manager
+    if token_manager is None:
+        client_id = Zotify.CONFIG.get_spotify_client_id()
+        client_secret = Zotify.CONFIG.get_spotify_client_secret()
+        if not client_id or not client_secret:
+            raise RuntimeError("Spotify Client ID and Secret must be configured. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in config.json or use --spotify-client-id and --spotify-client-secret")
+        token_manager = SpotifyTokenManager(client_id, client_secret)
+    return token_manager
 
 
 def get_saved_tracks() -> list:
@@ -47,47 +62,66 @@ def get_followed_artists() -> list:
 
 
 def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, Any, Any, Any, Any, int, str, str]:
-    """ Retrieves metadata for downloaded songs """
-    with Loader(PrintChannel.PROGRESS_INFO, "Fetching track information..."):
-        (raw, info) = Zotify.invoke_url(f'{TRACKS_URL}?ids={song_id}&market=from_token')
+    """ Retrieves metadata for downloaded songs using own Spotify API credentials """
 
-    if not TRACKS in info:
-        raise ValueError(f'Invalid response from TRACKS_URL:\n{raw}')
+    with Loader(PrintChannel.PROGRESS_INFO, "Fetching track information..."):
+        token = get_token_manager().get_token()
+
+        response = requests.get(
+            f"https://api.spotify.com/v1/tracks",
+            params={"ids": song_id, "market": "US"},
+            headers={
+                "Authorization": f"Bearer {token}"
+            }
+        )
+
+    if response.status_code == 429:
+        raise RuntimeError("Spotify API rate limit exceeded (your app)")
+
+    response.raise_for_status()
+    info = response.json()
+
+    if TRACKS not in info:
+        raise ValueError(f'Invalid response from TRACKS_URL:\n{info}')
 
     try:
-        artists = []
-        for data in info[TRACKS][0][ARTISTS]:
-            artists.append(data[NAME])
+        track = info[TRACKS][0]
 
-        album_name = info[TRACKS][0][ALBUM][NAME]
-        album_id = info[TRACKS][0][ALBUM][ID]
-        name = info[TRACKS][0][NAME]
-        release_year = info[TRACKS][0][ALBUM][RELEASE_DATE].split('-')[0]
-        disc_number = info[TRACKS][0][DISC_NUMBER]
-        track_number = info[TRACKS][0][TRACK_NUMBER]
-        scraped_song_id = info[TRACKS][0][ID]
-        is_playable = info[TRACKS][0][IS_PLAYABLE]
-        duration_ms = info[TRACKS][0][DURATION_MS]
+        artists = [a[NAME] for a in track[ARTISTS]]
+        album = track[ALBUM]
 
-        image = info[TRACKS][0][ALBUM][IMAGES][0]
-        for i in info[TRACKS][0][ALBUM][IMAGES]:
-            if i[WIDTH] > image[WIDTH]:
-                image = i
+        album_name = album[NAME]
+        album_id = album[ID]
+        name = track[NAME]
+        release_year = album[RELEASE_DATE].split('-')[0]
+        disc_number = track[DISC_NUMBER]
+        track_number = track[TRACK_NUMBER]
+        scraped_song_id = track[ID]
+        is_playable = track[IS_PLAYABLE]
+        duration_ms = track[DURATION_MS]
+
+        image = max(album[IMAGES], key=lambda i: i[WIDTH])
         image_url = image[URL]
 
         # Fetch album metadata to get album artist
         album_artist = "Unknown Album Artist"
         album_artist_or_various = None
         try:
-            (album_raw, album_info) = Zotify.invoke_url(f'https://api.spotify.com/v1/albums/{album_id}')
+            album_response = requests.get(
+                f'https://api.spotify.com/v1/albums/{album_id}',
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            album_response.raise_for_status()
+            album_info = album_response.json()
+
             if ARTISTS in album_info and len(album_info[ARTISTS]) > 0:
                 album_artist = album_info[ARTISTS][0][NAME]
 
                 # Check if this should be "Various Artists" by comparing track artists
                 album_tracks = album_info.get(TRACKS, {}).get(ITEMS, [])
                 unique_artists = set()
-                for track in album_tracks:
-                    for track_artist in track.get(ARTISTS, []):
+                for album_track in album_tracks:
+                    for track_artist in album_track.get(ARTISTS, []):
                         unique_artists.add(track_artist[NAME])
 
                 # If album has many different artists (>50% of tracks have different artists), use "Various Artists"
@@ -104,9 +138,24 @@ def get_song_info(song_id) -> Tuple[List[str], List[Any], str, str, Any, Any, An
             album_artist = artists[0] if artists else "Unknown Album Artist"
             album_artist_or_various = album_artist
 
-        return artists, info[TRACKS][0][ARTISTS], album_name, name, image_url, release_year, disc_number, track_number, scraped_song_id, is_playable, duration_ms, album_artist, album_artist_or_various
+        return (
+            artists,
+            track[ARTISTS],
+            album_name,
+            name,
+            image_url,
+            release_year,
+            disc_number,
+            track_number,
+            scraped_song_id,
+            is_playable,
+            duration_ms,
+            album_artist,
+            album_artist_or_various
+        )
+
     except Exception as e:
-        raise ValueError(f'Failed to parse TRACKS_URL response: {str(e)}\n{raw}')
+        raise ValueError(f'Failed to parse TRACKS_URL response: {str(e)}\n{info}')
 
 
 def get_song_genres(rawartists: List[str], track_name: str) -> List[str]:

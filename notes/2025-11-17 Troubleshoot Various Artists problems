@@ -1,0 +1,138 @@
+## Basic context
+
+See CLAUDE.md, README.md and the git commit "Additional output placeholder options relating to Album Artists"
+
+Resources:
+* config.json and credentials.json are in available, if you want to run Zotify or query the Spotify API
+* The output directory for "production" Zotify downloads is mounted at /Volumes/music/zotify/
+* Plex library can be accessed using details in ~/src/TimCinel/automations/zotify/plex-config.inc
+
+
+## Problem
+
+Some tracks downloaded by Zotify are being given unusual / incomplete metadata and appearing almost empty in Plex Amp.
+
+Some symptoms (not universal):
+* Tracks appear with artist "Various artists" (should never be the case! only album should have album artist "various artists", all tracks should have actual artist)
+* Have default album art (a studio microphone, I think it's the same as MusicBrainz "Various Artists") 
+
+
+### Examples
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F88622
+/Volumes/music/zotify/Chet Atkins/Chet Atkins - The Master And His Music/5 - Do I Ever Cross Your Mind.mp3
+
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F88274&context=source%3Acontent.playlists.music~2~3
+/Volumes/music/zotify/Curtis Mayfield/Superfly (Original Soundtrack)/2 - Pusherman.mp3 
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F87093&context=source%3Acontent.playlists.music~2~3
+/Volumes/music/zotify/Don McLean/American Pie/1 - American Pie.mp3
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F83671&context=source%3Acontent.playlists.music~2~3
+/Volumes/music/zotify/Bag Raiders/Bag Raiders (Deluxe)/3 - Shooting Stars.mp3 
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F87499&context=source%3Acontent.playlists.music~2~3
+/Volumes/music/zotify/Pennywise/Wild Card_A Word To The Wise/8 - Stand By Me.mp3
+
+https://plex.timcinel.com/web/index.html#!/server/5b8ba3b64474f89f1075e04ec94e016cdffd500f/details?key=%2Flibrary%2Fmetadata%2F87846&context=source%3Acontent.playlists.music~2~3
+/Volumes/music/zotify/The Who/Who Are You/9 - Who Are You.mp3
+
+### Expected naming
+
+The Track artist should _never_ be "various artists". If more than one artist is in the track, it can be:
+* "<Artist 1>, <Artist 2> - <Track>" etc.
+* "<Artist 1> - <Track> feat. <Artist 2>, <Artist 3>" etc.
+* Or whatever is most prevalent in modern music library management
+
+
+## Root Cause Analysis
+
+### Investigation Findings
+
+1. **File Metadata Was Correct**: All affected files had correct ID3 tags:
+   - `TPE1` (Artist): Correct track artist (e.g., "Curtis Mayfield")
+   - `TPE2` (Album Artist): Correct album artist (e.g., "Curtis Mayfield")
+   - No "Various Artists" in the actual file tags
+
+2. **Plex Database Issue**: Plex had stale metadata from initial scan
+   - Standard refresh endpoints didn't re-read file tags
+   - Albums were incorrectly grouped under "Various Artists" artist (ID: 82107)
+   - Tracks missing `originalTitle` field (which stores actual artist for compilations)
+
+3. **Zotify Code Bug**: Found in `zotify/track.py:78-105`
+   - `album_artist_or_various` initialized to `"Various Artists"` by default
+   - If Spotify API returned album data without ARTISTS field, the default stuck
+   - Should have fallen back to track artist instead
+
+### Solution Implemented
+
+#### 1. Fixed Zotify Code (track.py:78-105)
+
+**Changes:**
+- Changed default from `"Various Artists"` to `None`
+- Added `else` clause when API succeeds but returns no artist data
+- Both API failures and silent failures now fall back to track artist
+
+**Code:**
+```python
+album_artist_or_various = None  # Changed from "Various Artists"
+try:
+    # ... fetch album info ...
+    if ARTISTS in album_info and len(album_info[ARTISTS]) > 0:
+        # ... check if Various Artists ...
+    else:
+        # NEW: Graceful fallback when API returns data but no artist info
+        album_artist = artists[0] if artists else "Unknown Album Artist"
+        album_artist_or_various = album_artist
+except Exception as e:
+    # Existing fallback for API failures
+    album_artist = artists[0] if artists else "Unknown Album Artist"
+    album_artist_or_various = album_artist
+```
+
+#### 2. Created Detection Script
+
+**Script:** `find_broken_various_artists.py`
+
+**Purpose:** Identify tracks incorrectly filed under "Various Artists" in Plex
+
+**Logic:**
+- Query all tracks under "Various Artists" artist (ID: 82107)
+- Filter for tracks WITHOUT `originalTitle` field
+- Legitimate compilations HAVE `originalTitle` (the actual track artist)
+- Incorrectly filed albums DON'T have `originalTitle`
+
+**Output:** JSON with album URLs for easy "Fix Match" in Plex UI
+
+**Usage:**
+```bash
+python3 find_broken_various_artists.py
+```
+
+**Configuration:** Reads from `~/src/TimCinel/automations/zotify/plex-config.inc`
+
+#### 3. Fixing Existing Plex Issues
+
+For albums already in Plex with incorrect metadata:
+
+1. Run `find_broken_various_artists.py` to get list of affected albums
+2. Open each album URL in Plex Web
+3. Use "Fix Match" to force Plex to re-read file tags
+4. Plex will correctly read the album artist from the file
+
+**Note:** Standard Plex "Refresh" endpoints do NOT re-read local file tags, so "Fix Match" is required.
+
+## Results
+
+- **Zotify bug fixed**: Future downloads will have correct metadata
+- **Detection tool created**: Can identify problematic albums in Plex
+- **All 4 broken tracks identified and fixed** (as of 2025-11-17)
+
+## Files Modified
+
+- `zotify/track.py` - Fixed Various Artists default bug
+- `find_broken_various_artists.py` - Created detection script
+- `ROADMAP.md` - Documented network retry improvement needed
+
+
